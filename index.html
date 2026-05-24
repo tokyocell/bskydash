@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BskyDash</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Futura','Futura PT','Century Gothic',sans-serif;background:#f4f4f6;color:#1a1a1a;padding:1.5rem;max-width:900px;margin:0 auto}
+h1{font-size:17px;font-weight:500;color:#444;margin-bottom:1.25rem}
+.tabs{display:flex;gap:8px;margin-bottom:1.25rem;flex-wrap:wrap}
+.tab{padding:6px 18px;border-radius:20px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:13px;color:#555;transition:all .15s;font-family:inherit}
+.tab:hover{border-color:#534AB7;color:#534AB7}
+.tab.active{background:#534AB7;color:#fff;border-color:#534AB7}
+.account{display:none}.account.active{display:block}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1.25rem}
+.stat{background:#fff;border-radius:10px;padding:.875rem 1rem;border:1px solid #eee}
+.stat-label{font-size:11px;color:#999;margin-bottom:4px}
+.stat-value{font-size:20px;font-weight:500;color:#1a1a1a}
+.pos{color:#1D9E75}.neg{color:#D85A30}
+.card{background:#fff;border-radius:10px;border:1px solid #eee;padding:1rem 1.25rem;margin-bottom:10px}
+.section-label{font-size:12px;color:#999;margin-bottom:8px;font-weight:500}
+.chart-wrap{position:relative;width:100%;height:200px}
+.chart-wrap.bar{height:150px}
+.period-row{display:flex;gap:6px;margin-bottom:1rem}
+.pbtn{padding:4px 14px;border-radius:16px;border:1px solid #ddd;background:#fff;cursor:pointer;font-size:12px;color:#777;transition:all .15s;font-family:inherit}
+.pbtn:hover{border-color:#534AB7;color:#534AB7}
+.pbtn.pactive{background:#534AB7;color:#fff;border-color:#534AB7}
+.footer{font-size:11px;color:#bbb;margin-top:1.25rem}
+.loading{text-align:center;padding:3rem;color:#999;font-size:13px}
+@media(max-width:600px){.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<h1>BskyDash</h1>
+<div id="root"><div class="loading">Loading...</div></div>
+<p class="footer" id="footer"></p>
+
+<script>
+const SUPABASE_URL = 'https://mtpcpumsaglinwkxzvjf.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im10cGNwdW1zYWdsaW53a3h6dmpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MDYxNTksImV4cCI6MjA5NTE4MjE1OX0.KwXZiG3ta2KqHheMrzG2yiJORnRS7Hg971gTEKqOq9M';
+const PERIODS = [{label:'30d',days:30},{label:'90d',days:90},{label:'1yr',days:365},{label:'All',days:0}];
+const C = {};
+const currentPeriod = {};
+
+Chart.defaults.font.family = 'Futura, "Futura PT", "Century Gothic", sans-serif';
+
+async function fetchData() {
+  const res = await fetch(SUPABASE_URL + '/rest/v1/bsky_records?select=*&order=date.asc', {
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+  });
+  const rows = await res.json();
+  const grouped = {};
+  rows.forEach(r => {
+    if (!grouped[r.handle]) grouped[r.handle] = [];
+    grouped[r.handle].push({ date: r.date, followers: r.followers, likes: r.likes });
+  });
+  return grouped;
+}
+
+function fmt(n) { return n != null ? n.toLocaleString('en-US') : '—'; }
+function diffSpan(d) {
+  if (d === null) return '<span style="color:#bbb">—</span>';
+  const c = d > 0 ? 'pos' : d < 0 ? 'neg' : '';
+  return `<span class="${c}">${d >= 0 ? '+' : ''}${d.toLocaleString('en-US')}</span>`;
+}
+function filterRecords(records, days) {
+  if (!days || !records.length) return records;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  const cutStr = cutoff.toISOString().slice(0, 10);
+  return records.filter(r => r.date >= cutStr);
+}
+
+function lineChart(id, records, field, color, bg) {
+  if (C[id]) C[id].destroy();
+  const ctx = document.getElementById(id)?.getContext('2d');
+  if (!ctx || !records.length) return;
+  C[id] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: records.map(r => r.date.slice(5)),
+      datasets: [{ data: records.map(r => r[field] ?? 0), borderColor: color, backgroundColor: bg, borderWidth: 2, pointBackgroundColor: color, pointRadius: records.length <= 14 ? 4 : 2, tension: .3, fill: true }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.parsed.y.toLocaleString('en-US') } } }, scales: { x: { ticks: { autoSkip: true, maxTicksLimit: 12, color: '#999', font: { size: 11 } }, grid: { color: 'rgba(0,0,0,0.05)' } }, y: { ticks: { color: '#999', font: { size: 11 }, callback: v => v.toLocaleString('en-US') }, grid: { color: 'rgba(0,0,0,0.05)' } } } }
+  });
+}
+
+function barChart(id, records, field) {
+  if (C[id]) C[id].destroy();
+  const ctx = document.getElementById(id)?.getContext('2d');
+  if (!ctx || records.length < 2) return;
+  const labels = [], diffs = [], colors = [], borders = [];
+  for (let i = 1; i < records.length; i++) {
+    labels.push(records[i].date.slice(5));
+    const d = (records[i][field] ?? 0) - (records[i - 1][field] ?? 0);
+    diffs.push(d);
+    colors.push(d >= 0 ? 'rgba(29,158,117,.75)' : 'rgba(216,90,48,.75)');
+    borders.push(d >= 0 ? '#0F6E56' : '#993C1D');
+  }
+  C[id] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ data: diffs, backgroundColor: colors, borderColor: borders, borderWidth: 1, borderRadius: 3 }] },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => (c.parsed.y >= 0 ? '+' : '') + c.parsed.y.toLocaleString('en-US') } } }, scales: { x: { ticks: { autoSkip: true, maxTicksLimit: 12, color: '#999', font: { size: 11 } }, grid: { color: 'rgba(0,0,0,0.05)' } }, y: { ticks: { color: '#999', font: { size: 11 }, callback: v => (v >= 0 ? '+' : '') + v.toLocaleString('en-US') }, grid: { color: 'rgba(0,0,0,0.05)' }, border: { dash: [3, 3] } } } }
+  });
+}
+
+function render(handle, all) {
+  const days = currentPeriod[handle] ?? 0;
+  const records = filterRecords(all, days);
+  const last = all[all.length - 1];
+  const prev = all.length >= 2 ? all[all.length - 2] : null;
+  const df = prev != null ? last.followers - prev.followers : null;
+  const dl = prev != null ? (last.likes ?? 0) - (prev.likes ?? 0) : null;
+  document.getElementById('sf-' + handle).textContent = fmt(last.followers);
+  document.getElementById('sdf-' + handle).innerHTML = diffSpan(df);
+  document.getElementById('sl-' + handle).textContent = fmt(last.likes ?? 0);
+  document.getElementById('sdl-' + handle).innerHTML = diffSpan(dl);
+  document.querySelectorAll('.pbtn-' + handle).forEach(b => b.classList.toggle('pactive', parseInt(b.dataset.days) === days));
+  lineChart('cfl-' + handle, records, 'followers', '#534AB7', 'rgba(83,74,183,.08)');
+  barChart('cfb-' + handle, records, 'followers');
+  barChart('clb-' + handle, records, 'likes');
+}
+
+function setPeriod(handle, days, all) {
+  currentPeriod[handle] = days;
+  render(handle, all);
+}
+
+function switchTo(handle, all) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.h === handle));
+  document.querySelectorAll('.account').forEach(a => a.classList.toggle('active', a.id === 'acc-' + handle));
+  render(handle, all);
+}
+
+async function init() {
+  const ALL = await fetchData();
+  const handles = Object.keys(ALL);
+  if (!handles.length) { document.getElementById('root').innerHTML = '<div class="loading">No data yet.</div>'; return; }
+
+  const tabs = handles.map(h => `<button class="tab" data-h="${h}" onclick="switchTo('${h}', ALL)">${h}</button>`).join('');
+  const accounts = handles.map(h => {
+    currentPeriod[h] = 0;
+    const pbtns = PERIODS.map(p => `<button class="pbtn pbtn-${h}" data-days="${p.days}" onclick="setPeriod('${h}',${p.days},ALL)">${p.label}</button>`).join('');
+    return `<div class="account" id="acc-${h}">
+      <div class="stats">
+        <div class="stat"><div class="stat-label">Followers</div><div class="stat-value" id="sf-${h}">—</div></div>
+        <div class="stat"><div class="stat-label">Followers (vs prev day)</div><div class="stat-value" id="sdf-${h}">—</div></div>
+        <div class="stat"><div class="stat-label">Total Likes</div><div class="stat-value" id="sl-${h}">—</div></div>
+        <div class="stat"><div class="stat-label">Likes (vs prev day)</div><div class="stat-value" id="sdl-${h}">—</div></div>
+      </div>
+      <div class="period-row">${pbtns}</div>
+      <div class="card"><div class="section-label">Followers over time</div><div class="chart-wrap"><canvas id="cfl-${h}"></canvas></div></div>
+      <div class="card"><div class="section-label">Follower change (daily)</div><div class="chart-wrap bar"><canvas id="cfb-${h}"></canvas></div></div>
+      <div class="card"><div class="section-label">Like change (daily)</div><div class="chart-wrap bar"><canvas id="clb-${h}"></canvas></div></div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('root').innerHTML = `<div class="tabs">${tabs}</div><div>${accounts}</div>`;
+  document.getElementById('footer').textContent = 'Last updated: ' + new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });
+
+  window.ALL = ALL;
+  switchTo(handles[0], ALL);
+}
+
+init();
+</script>
+</body>
+</html>
