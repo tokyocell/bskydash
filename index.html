@@ -36,34 +36,14 @@ h1{font-size:17px;font-weight:500;color:#444;margin-bottom:1.25rem}
 <h1>BskyDash</h1>
 <div id="root"><div class="loading">Loading...</div></div>
 <p class="footer" id="footer"></p>
-
 <script>
 const SUPABASE_URL = 'https://mtpcpumsaglinwkxzvjf.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im10cGNwdW1zYWdsaW53a3h6dmpmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2MDYxNTksImV4cCI6MjA5NTE4MjE1OX0.KwXZiG3ta2KqHheMrzG2yiJORnRS7Hg971gTEKqOq9M';
 const PERIODS = [{label:'30d',days:30},{label:'90d',days:90},{label:'1yr',days:365},{label:'All',days:0}];
 const C = {};
-const currentPeriod = {};
+const state = { ALL: {}, period: {} };
 
 Chart.defaults.font.family = 'Futura, "Futura PT", "Century Gothic", sans-serif';
-
-async function fetchData() {
-  try {
-    const res = await fetch(SUPABASE_URL + '/rest/v1/bsky_records?select=*&order=date.asc', {
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
-    });
-    const rows = await res.json();
-    if (!Array.isArray(rows)) return {};
-    const grouped = {};
-    rows.forEach(r => {
-      if (!grouped[r.handle]) grouped[r.handle] = [];
-      grouped[r.handle].push({ date: r.date, followers: r.followers, likes: r.likes });
-    });
-    return grouped;
-  } catch(e) {
-    console.error('fetchData error:', e);
-    return {};
-  }
-}
 
 function fmt(n) { return n != null ? n.toLocaleString('en-US') : '—'; }
 function diffSpan(d) {
@@ -80,10 +60,10 @@ function filterRecords(records, days) {
 }
 
 function lineChart(id, records, field, color, bg) {
-  if (C[id]) C[id].destroy();
-  const ctx = document.getElementById(id)?.getContext('2d');
-  if (!ctx || !records.length) return;
-  C[id] = new Chart(ctx, {
+  if (C[id]) { C[id].destroy(); delete C[id]; }
+  const el = document.getElementById(id);
+  if (!el || !records.length) return;
+  C[id] = new Chart(el.getContext('2d'), {
     type: 'line',
     data: {
       labels: records.map(r => r.date.slice(5)),
@@ -94,9 +74,9 @@ function lineChart(id, records, field, color, bg) {
 }
 
 function barChart(id, records, field) {
-  if (C[id]) C[id].destroy();
-  const ctx = document.getElementById(id)?.getContext('2d');
-  if (!ctx || records.length < 2) return;
+  if (C[id]) { C[id].destroy(); delete C[id]; }
+  const el = document.getElementById(id);
+  if (!el || records.length < 2) return;
   const labels = [], diffs = [], colors = [], borders = [];
   for (let i = 1; i < records.length; i++) {
     labels.push(records[i].date.slice(5));
@@ -105,20 +85,22 @@ function barChart(id, records, field) {
     colors.push(d >= 0 ? 'rgba(29,158,117,.75)' : 'rgba(216,90,48,.75)');
     borders.push(d >= 0 ? '#0F6E56' : '#993C1D');
   }
-  C[id] = new Chart(ctx, {
+  C[id] = new Chart(el.getContext('2d'), {
     type: 'bar',
     data: { labels, datasets: [{ data: diffs, backgroundColor: colors, borderColor: borders, borderWidth: 1, borderRadius: 3 }] },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => (c.parsed.y >= 0 ? '+' : '') + c.parsed.y.toLocaleString('en-US') } } }, scales: { x: { ticks: { autoSkip: true, maxTicksLimit: 12, color: '#999', font: { size: 11 } }, grid: { color: 'rgba(0,0,0,0.05)' } }, y: { ticks: { color: '#999', font: { size: 11 }, callback: v => (v >= 0 ? '+' : '') + v.toLocaleString('en-US') }, grid: { color: 'rgba(0,0,0,0.05)' }, border: { dash: [3, 3] } } } }
   });
 }
 
-function render(handle, all) {
+function renderAccount(handle) {
+  const all = state.ALL[handle];
   if (!all || !all.length) return;
+  const days = state.period[handle] ?? 0;
   const records = filterRecords(all, days);
   const last = all[all.length - 1];
   const prev = all.length >= 2 ? all[all.length - 2] : null;
-  const df = prev != null ? last.followers - prev.followers : null;
-  const dl = prev != null ? (last.likes ?? 0) - (prev.likes ?? 0) : null;
+  const df = prev ? last.followers - prev.followers : null;
+  const dl = prev ? (last.likes ?? 0) - (prev.likes ?? 0) : null;
   document.getElementById('sf-' + handle).textContent = fmt(last.followers);
   document.getElementById('sdf-' + handle).innerHTML = diffSpan(df);
   document.getElementById('sl-' + handle).textContent = fmt(last.likes ?? 0);
@@ -129,45 +111,55 @@ function render(handle, all) {
   barChart('clb-' + handle, records, 'likes');
 }
 
-function setPeriod(handle, days, all) {
-  currentPeriod[handle] = days;
-  render(handle, all);
+function setPeriod(handle, days) {
+  state.period[handle] = days;
+  renderAccount(handle);
 }
 
-function switchTo(handle, all) {
+function switchTo(handle) {
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.h === handle));
   document.querySelectorAll('.account').forEach(a => a.classList.toggle('active', a.id === 'acc-' + handle));
-  render(handle, all);
+  renderAccount(handle);
 }
 
 async function init() {
-  const ALL = await fetchData();
-  const handles = Object.keys(ALL);
-  if (!handles.length) { document.getElementById('root').innerHTML = '<div class="loading">No data yet.</div>'; return; }
-
-  const tabs = handles.map(h => `<button class="tab" data-h="${h}" onclick="switchTo('${h}', ALL)">${h}</button>`).join('');
-  const accounts = handles.map(h => {
-    currentPeriod[h] = 0;
-    const pbtns = PERIODS.map(p => `<button class="pbtn pbtn-${h}" data-days="${p.days}" onclick="setPeriod('${h}',${p.days},ALL)">${p.label}</button>`).join('');
-    return `<div class="account" id="acc-${h}">
-      <div class="stats">
-        <div class="stat"><div class="stat-label">Followers</div><div class="stat-value" id="sf-${h}">—</div></div>
-        <div class="stat"><div class="stat-label">Followers (vs prev day)</div><div class="stat-value" id="sdf-${h}">—</div></div>
-        <div class="stat"><div class="stat-label">Total Likes</div><div class="stat-value" id="sl-${h}">—</div></div>
-        <div class="stat"><div class="stat-label">Likes (vs prev day)</div><div class="stat-value" id="sdl-${h}">—</div></div>
-      </div>
-      <div class="period-row">${pbtns}</div>
-      <div class="card"><div class="section-label">Followers over time</div><div class="chart-wrap"><canvas id="cfl-${h}"></canvas></div></div>
-      <div class="card"><div class="section-label">Follower change (daily)</div><div class="chart-wrap bar"><canvas id="cfb-${h}"></canvas></div></div>
-      <div class="card"><div class="section-label">Like change (daily)</div><div class="chart-wrap bar"><canvas id="clb-${h}"></canvas></div></div>
-    </div>`;
-  }).join('');
-
-  document.getElementById('root').innerHTML = `<div class="tabs">${tabs}</div><div>${accounts}</div>`;
-  document.getElementById('footer').textContent = 'Last updated: ' + new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });
-
-  window.ALL = ALL;
-  switchTo(handles[0], ALL);
+  try {
+    const res = await fetch(SUPABASE_URL + '/rest/v1/bsky_records?select=*&order=date.asc', {
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': 'Bearer ' + SUPABASE_KEY }
+    });
+    const rows = await res.json();
+    if (!Array.isArray(rows) || !rows.length) {
+      document.getElementById('root').innerHTML = '<div class="loading">No data yet.</div>';
+      return;
+    }
+    rows.forEach(r => {
+      if (!state.ALL[r.handle]) state.ALL[r.handle] = [];
+      state.ALL[r.handle].push({ date: r.date, followers: r.followers, likes: r.likes });
+    });
+    const handles = Object.keys(state.ALL);
+    handles.forEach(h => { state.period[h] = 0; });
+    const tabs = handles.map(h => `<button class="tab" data-h="${h}" onclick="switchTo('${h}')">${h}</button>`).join('');
+    const accounts = handles.map(h => {
+      const pbtns = PERIODS.map(p => `<button class="pbtn pbtn-${h}" data-days="${p.days}" onclick="setPeriod('${h}',${p.days})">${p.label}</button>`).join('');
+      return `<div class="account" id="acc-${h}">
+        <div class="stats">
+          <div class="stat"><div class="stat-label">Followers</div><div class="stat-value" id="sf-${h}">—</div></div>
+          <div class="stat"><div class="stat-label">Followers (vs prev day)</div><div class="stat-value" id="sdf-${h}">—</div></div>
+          <div class="stat"><div class="stat-label">Total Likes</div><div class="stat-value" id="sl-${h}">—</div></div>
+          <div class="stat"><div class="stat-label">Likes (vs prev day)</div><div class="stat-value" id="sdl-${h}">—</div></div>
+        </div>
+        <div class="period-row">${pbtns}</div>
+        <div class="card"><div class="section-label">Followers over time</div><div class="chart-wrap"><canvas id="cfl-${h}"></canvas></div></div>
+        <div class="card"><div class="section-label">Follower change (daily)</div><div class="chart-wrap bar"><canvas id="cfb-${h}"></canvas></div></div>
+        <div class="card"><div class="section-label">Like change (daily)</div><div class="chart-wrap bar"><canvas id="clb-${h}"></canvas></div></div>
+      </div>`;
+    }).join('');
+    document.getElementById('root').innerHTML = `<div class="tabs">${tabs}</div><div>${accounts}</div>`;
+    document.getElementById('footer').textContent = 'Last updated: ' + new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });
+    switchTo(handles[0]);
+  } catch(e) {
+    document.getElementById('root').innerHTML = '<div class="loading">Error: ' + e.message + '</div>';
+  }
 }
 
 init();
