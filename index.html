@@ -115,20 +115,6 @@ function switchTo(handle) {
   renderAccount(handle);
 }
 
-function todayJST() {
-  const now = new Date();
-  const jst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  return jst.toISOString().slice(0, 10);
-}
-
-async function fetchLiveFollowers(handle) {
-  try {
-    const res = await fetch('https://public.api.bsky.app/xrpc/app.bsky.actor.getProfile?actor=' + encodeURIComponent(handle));
-    const d = await res.json();
-    return d.followersCount ?? null;
-  } catch { return null; }
-}
-
 async function init() {
   try {
     const res = await fetch(SUPABASE_URL + '/rest/v1/bsky_records?select=handle,date,followers&order=date.asc', {
@@ -143,11 +129,9 @@ async function init() {
       if (!state.ALL[r.handle]) state.ALL[r.handle] = [];
       state.ALL[r.handle].push({ date: r.date, followers: r.followers });
     });
-
     const HANDLE_ORDER = ['xlix.me','day.xlix.me','xlix.bsky.social','ae.xlix.me','hirotium.bsky.social','xoxm.bsky.social','xeae.bsky.social','tokyocell.bsky.social'];
     const handles = HANDLE_ORDER.filter(h => state.ALL[h]);
     handles.forEach(h => { state.period[h] = 0; });
-
     const tabs = handles.map(h => `<button class="tab" data-h="${h}" onclick="switchTo('${h}')">${h}</button>`).join('');
     const accounts = handles.map(h => {
       const pbtns = PERIODS.map(p => `<button class="pbtn pbtn-${h}" data-days="${p.days}" onclick="setPeriod('${h}',${p.days})">${p.label}</button>`).join('');
@@ -162,23 +146,8 @@ async function init() {
       </div>`;
     }).join('');
     document.getElementById('root').innerHTML = `<div class="tabs">${tabs}</div><div>${accounts}</div>`;
-    switchTo(handles[0]);
-
-    // 今日のデータが Supabase にあるかチェックし、なければリアルタイム取得
-    const today = todayJST();
-    await Promise.all(handles.map(async h => {
-      const records = state.ALL[h];
-      const hasToday = records.length > 0 && records[records.length - 1].date === today;
-      if (!hasToday) {
-        const live = await fetchLiveFollowers(h);
-        if (live !== null) {
-          records.push({ date: today, followers: live, live: true });
-          renderAccount(h);
-        }
-      }
-    }));
-
     document.getElementById('footer').textContent = 'Last updated: ' + new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' });
+    switchTo(handles[0]);
   } catch(e) {
     document.getElementById('root').innerHTML = '<div class="loading">Error: ' + e.message + '</div>';
   }
