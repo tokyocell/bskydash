@@ -129,7 +129,7 @@ async function init() {
       if (!state.ALL[r.handle]) state.ALL[r.handle] = [];
       state.ALL[r.handle].push({ date: r.date, followers: r.followers });
     });
-    const HANDLE_ORDER = ['xlix.me','day.xlix.me','xlix.bsky.social','ae.xlix.me','hirotium.bsky.social','xoxm.bsky.social','xeae.bsky.social'];
+    const HANDLE_ORDER = ['xlix.me','day.xlix.me','xlix.bsky.social','ae.xlix.me','hirotium.bsky.social','xoxm.bsky.social','xeae.bsky.social','tokyocell.bsky.social'];
     const handles = HANDLE_ORDER.filter(h => state.ALL[h]);
     handles.forEach(h => { state.period[h] = 0; });
     const tabs = handles.map(h => `<button class="tab" data-h="${h}" onclick="switchTo('${h}')">${h}</button>`).join('');
